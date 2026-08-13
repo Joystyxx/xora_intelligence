@@ -1,0 +1,48 @@
+name: XORA Bounty Scraper
+
+on:
+  schedule:
+    - cron: "0 23 * * *"
+  workflow_dispatch:
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run scraper
+        env:
+          XORA_API_URL: ${{ secrets.XORA_API_URL }}
+          XORA_CONTRIBUTOR_ID: ${{ secrets.XORA_CONTRIBUTOR_ID }}
+        run: python scraper/bounty_scraper.py
+
+      - name: Validate data
+        env:
+          XORA_API_URL: ${{ secrets.XORA_API_URL }}
+          XORA_CONTRIBUTOR_ID: ${{ secrets.XORA_CONTRIBUTOR_ID }}
+        run: python scraper/validate_data.py
+
+      - name: Commit updated data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add data/bounty_current.csv data/bounty_history.csv
+
+          if git diff --cached --quiet; then
+            echo "No data changes detected."
+          else
+            git commit -m "Update XORA bounty data"
+            git push
+          fi
