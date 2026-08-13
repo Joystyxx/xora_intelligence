@@ -24,16 +24,13 @@ jobs:
           XORA_CONTRIBUTOR_ID: ${{ secrets.XORA_CONTRIBUTOR_ID }}
           PYTHONPATH: .
         run: python scraper/bounty_scraper.py
-      
-      
-      
-        - name: Validate data
+
+      - name: Validate data
         env:
           XORA_API_URL: ${{ secrets.XORA_API_URL }}
           XORA_CONTRIBUTOR_ID: ${{ secrets.XORA_CONTRIBUTOR_ID }}
           PYTHONPATH: .
         run: python scraper/validate_data.py
-
 
       - name: Commit updated data
         run: |
