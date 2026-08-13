@@ -1,7 +1,13 @@
 import requests
 import pandas as pd
 from datetime import datetime, timezone
+
+import sys
 from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
 from config.config import API_URL, CONTRIBUTOR_ID
 
 
