@@ -28,32 +28,27 @@ def main():
 
     if not CURRENT_FILE.exists():
         print("\nERROR: bounty_current.csv not found.")
-        return
+        raise SystemExit(1)
 
     if not HISTORY_FILE.exists():
         print("\nERROR: bounty_history.csv not found.")
-        return
+        raise SystemExit(1)
 
     current = pd.read_csv(CURRENT_FILE)
     history = pd.read_csv(HISTORY_FILE)
 
     # -------------------------
-    # BASIC COUNTS
+    # CURRENT STATE INTEGRITY
     # -------------------------
 
     current_task_count = current["task_id"].nunique()
-    history_task_count = history["task_id"].nunique()
+
+    current_duplicates = current["task_id"].duplicated().sum()
 
     print("\nDATASETS")
     print("-" * 60)
     print(f"Current state : {len(current)} rows")
     print(f"Full history  : {len(history)} rows")
-
-    # -------------------------
-    # CURRENT DUPLICATES
-    # -------------------------
-
-    current_duplicates = current["task_id"].duplicated().sum()
 
     print("\nCURRENT STATE INTEGRITY")
     print("-" * 60)
@@ -61,17 +56,19 @@ def main():
     print(f"Current duplicate IDs: {current_duplicates}")
 
     # -------------------------
-    # HISTORY SNAPSHOT CHECK
+    # HISTORY INTEGRITY
     # -------------------------
 
     history["scraped_at"] = history["scraped_at"].astype(str)
 
-    history_duplicate_snapshots = history.duplicated(
+    history_task_count = history["task_id"].nunique()
+
+    history_duplicate_records = history.duplicated(
         subset=["task_id", "scraped_at"]
     ).sum()
 
     snapshot_times = sorted(
-        history["scraped_at"].unique()
+        history["scraped_at"].dropna().unique()
     )
 
     snapshot_count = len(snapshot_times)
@@ -80,100 +77,77 @@ def main():
     print("-" * 60)
     print(f"Unique tasks in history : {history_task_count}")
     print(f"Historical snapshots    : {snapshot_count}")
-    print(f"Duplicate snapshots     : {history_duplicate_snapshots}")
+    print(f"Duplicate history rows  : {history_duplicate_records}")
 
     if snapshot_times:
         print(f"First snapshot          : {snapshot_times[0]}")
         print(f"Latest snapshot         : {snapshot_times[-1]}")
 
     # -------------------------
-    # COMPARE CURRENT STATE
+    # LATEST HISTORY CHANGE
     # -------------------------
 
-    new_tasks = 0
-    changed_tasks = 0
-    unchanged_tasks = 0
+    latest_change_count = 0
+    latest_changed_tasks = 0
+    latest_new_tasks = 0
 
-    history_records_added = 0
+    if snapshot_times:
 
-    if len(snapshot_times) >= 2:
-
-        previous_time = snapshot_times[-2]
         latest_time = snapshot_times[-1]
 
-        previous_snapshot = history[
-            history["scraped_at"] == previous_time
-        ].copy()
-
-        latest_snapshot = history[
+        latest_changes = history[
             history["scraped_at"] == latest_time
         ].copy()
 
-        # Tasks represented in each historical snapshot
-        previous_ids = set(previous_snapshot["task_id"])
-        latest_ids = set(latest_snapshot["task_id"])
+        latest_change_count = len(latest_changes)
 
-        # New tasks
-        new_tasks = len(latest_ids - previous_ids)
+        # A task appearing in history for the first time is a new task.
+        task_first_seen = (
+            history.groupby("task_id")["scraped_at"]
+            .min()
+        )
 
-        # Changed tasks are represented by the latest history batch.
-        changed_tasks = len(latest_ids - (latest_ids - previous_ids))
+        latest_new_tasks = sum(
+            task_first_seen.loc[task_id] == latest_time
+            for task_id in latest_changes["task_id"]
+        )
 
-        # However, a latest snapshot may contain both:
-        # new tasks and changed existing tasks.
-        existing_changed_tasks = latest_ids & previous_ids
+        latest_new_tasks = int(latest_new_tasks)
 
-        changed_tasks = len(existing_changed_tasks)
+        latest_changed_tasks = (
+            latest_change_count - latest_new_tasks
+        )
 
-        unchanged_tasks = current_task_count - new_tasks - changed_tasks
-
-        history_records_added = len(latest_snapshot)
-
-        print("\nLATEST UPDATE")
-        print("-" * 60)
-        print(f"Current tasks           : {current_task_count}")
-        print(f"Previous current tasks  : {len(previous_ids)}")
-        print(f"New tasks added         : {new_tasks}")
-        print(f"Changed existing tasks  : {changed_tasks}")
-        print(f"Unchanged tasks         : {unchanged_tasks}")
-        print(f"History records added   : {history_records_added}")
-
-    else:
-
-        print("\nLATEST UPDATE")
-        print("-" * 60)
-        print("Initial snapshot only.")
-        print(f"Current tasks           : {current_task_count}")
-        print("New tasks added         : 0")
-        print("Changed existing tasks  : 0")
-        print(f"History records         : {len(history)}")
+    print("\nLATEST UPDATE")
+    print("-" * 60)
+    print(f"History records added   : {latest_change_count}")
+    print(f"New tasks added         : {latest_new_tasks}")
+    print(f"Changed existing tasks  : {latest_changed_tasks}")
 
     # -------------------------
     # CURRENT BUSINESS STATUS
     # -------------------------
 
+    open_tasks = (
+        current["status"] == "open"
+    ).sum()
+
+    claimed_tasks = (
+        current["status"] == "claimed"
+    ).sum()
+
+    paid_tasks = (
+        current["status"] == "paid"
+    ).sum()
+
+    total_spots_left = current["spots_left"].sum()
+
     print("\nCURRENT METRICS")
     print("-" * 60)
-
-    print(
-        f"Open tasks             : "
-        f"{(current['status'] == 'open').sum()}"
-    )
-
-    print(
-        f"Claimed tasks          : "
-        f"{(current['status'] == 'claimed').sum()}"
-    )
-
-    print(
-        f"Paid tasks             : "
-        f"{(current['status'] == 'paid').sum()}"
-    )
-
-    print(
-        f"Total spots left       : "
-        f"{current['spots_left'].sum()}"
-    )
+    print(f"Open tasks             : {open_tasks}")
+    print(f"Claimed tasks          : {claimed_tasks}")
+    print(f"Paid tasks             : {paid_tasks}")
+    print(f"Total spots left       : {total_spots_left}")
 
     # -------------------------
     # HISTORY GROWTH
@@ -186,15 +160,34 @@ def main():
     print(f"Historical snapshots    : {snapshot_count}")
 
     # -------------------------
-    # FINAL VALIDATION
+    # VALIDATION RULES
     # -------------------------
 
-    valid = (
-        len(current) == current_task_count
-        and current_duplicates == 0
-        and history_duplicate_snapshots == 0
-        and history_task_count >= current_task_count
-    )
+    valid = True
+
+    # Current state must contain one row per task.
+    if len(current) != current_task_count:
+        valid = False
+
+    # No duplicate current task IDs.
+    if current_duplicates != 0:
+        valid = False
+
+    # No duplicate task + timestamp records in history.
+    if history_duplicate_records != 0:
+        valid = False
+
+    # History must contain at least the tasks currently known.
+    if history_task_count < current_task_count:
+        valid = False
+
+    # History cannot be empty.
+    if history.empty:
+        valid = False
+
+    # -------------------------
+    # RESULT
+    # -------------------------
 
     print("\nRESULT")
     print("-" * 60)
@@ -203,6 +196,7 @@ def main():
         print("VALIDATION PASSED")
     else:
         print("VALIDATION FAILED")
+        raise SystemExit(1)
 
     print("=" * 60)
 
