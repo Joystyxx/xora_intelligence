@@ -19,12 +19,13 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: pip install -r requirements.txt    
+        run: pip install -r requirements.txt
 
       - name: Run scraper
         env:
           XORA_API_URL: ${{ secrets.XORA_API_URL }}
           XORA_CONTRIBUTOR_ID: ${{ secrets.XORA_CONTRIBUTOR_ID }}
+          NEON_STRING: ${{ secrets.NEON_STRING }}
           PYTHONPATH: .
         run: python scraper/bounty_scraper.py
 
@@ -32,6 +33,7 @@ jobs:
         env:
           XORA_API_URL: ${{ secrets.XORA_API_URL }}
           XORA_CONTRIBUTOR_ID: ${{ secrets.XORA_CONTRIBUTOR_ID }}
+          NEON_STRING: ${{ secrets.NEON_STRING }}
           PYTHONPATH: .
         run: python scraper/validate_data.py
 
