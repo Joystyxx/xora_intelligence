@@ -1,14 +1,21 @@
+import os
 import requests
 import pandas as pd
+import psycopg2
+
+from dotenv import load_dotenv
 from datetime import datetime, timezone
 
 import sys
 from pathlib import Path
 
+load_dotenv()
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from config.config import API_URL, CONTRIBUTOR_ID
+
 
 
 # ============================================================
@@ -21,6 +28,11 @@ DATA_DIR.mkdir(exist_ok=True)
 CURRENT_FILE = DATA_DIR / "bounty_current.csv"
 HISTORY_FILE = DATA_DIR / "bounty_history.csv"
 
+
+DATABASE_URL = os.getenv("NEON_STRING")
+
+if not DATABASE_URL:
+    raise ValueError("NEON_STRING is not configured.")
 
 # ============================================================
 # FIELDS
@@ -463,6 +475,254 @@ def print_summary(new_df, old_df, history_rows):
     print("=" * 60)
 
 
+
+# ============================================================
+# NEON DATABASE
+# ============================================================
+
+def get_db_connection():
+    return psycopg2.connect(DATABASE_URL)
+
+
+def save_current_to_neon(new_df):
+    """
+    Replace the Neon current-state table with the latest
+    state returned by the API.
+    """
+
+    conn = get_db_connection()
+
+    try:
+        cursor = conn.cursor()
+
+        # Upsert every current bounty.
+        for _, row in new_df.iterrows():
+
+            cursor.execute(
+                """
+                INSERT INTO bounty_current (
+                    task_id,
+                    title,
+                    category,
+                    brief,
+                    proof_required,
+                    reward_xrp,
+                    reward_xora,
+                    reward_label,
+                    status,
+                    task_status,
+                    max_claims,
+                    claimed_count,
+                    spots_left,
+                    submitted_count,
+                    approved_count,
+                    paid_count,
+                    difficulty,
+                    quality_bar,
+                    min_proof_chars,
+                    proof_link_required,
+                    x_post_required,
+                    min_account_age_hours,
+                    own_proof_link,
+                    own_proof_text,
+                    last_seen_at
+                )
+                VALUES (
+                    %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s
+                )
+                ON CONFLICT (task_id)
+                DO UPDATE SET
+                    title = EXCLUDED.title,
+                    category = EXCLUDED.category,
+                    brief = EXCLUDED.brief,
+                    proof_required = EXCLUDED.proof_required,
+                    reward_xrp = EXCLUDED.reward_xrp,
+                    reward_xora = EXCLUDED.reward_xora,
+                    reward_label = EXCLUDED.reward_label,
+                    status = EXCLUDED.status,
+                    task_status = EXCLUDED.task_status,
+                    max_claims = EXCLUDED.max_claims,
+                    claimed_count = EXCLUDED.claimed_count,
+                    spots_left = EXCLUDED.spots_left,
+                    submitted_count = EXCLUDED.submitted_count,
+                    approved_count = EXCLUDED.approved_count,
+                    paid_count = EXCLUDED.paid_count,
+                    difficulty = EXCLUDED.difficulty,
+                    quality_bar = EXCLUDED.quality_bar,
+                    min_proof_chars = EXCLUDED.min_proof_chars,
+                    proof_link_required = EXCLUDED.proof_link_required,
+                    x_post_required = EXCLUDED.x_post_required,
+                    min_account_age_hours = EXCLUDED.min_account_age_hours,
+                    own_proof_link = EXCLUDED.own_proof_link,
+                    own_proof_text = EXCLUDED.own_proof_text,
+                    last_seen_at = EXCLUDED.last_seen_at
+                """,
+                (
+                    row.get("task_id"),
+                    row.get("title"),
+                    row.get("category"),
+                    row.get("brief"),
+                    row.get("proof_required"),
+                    row.get("reward_xrp"),
+                    row.get("reward_xora"),
+                    row.get("reward_label"),
+                    row.get("status"),
+                    row.get("task_status"),
+                    row.get("max_claims"),
+                    row.get("claimed_count"),
+                    row.get("spots_left"),
+                    row.get("submitted_count"),
+                    row.get("approved_count"),
+                    row.get("paid_count"),
+                    row.get("difficulty"),
+                    row.get("quality_bar"),
+                    row.get("min_proof_chars"),
+                    row.get("proof_link_required"),
+                    row.get("x_post_required"),
+                    row.get("min_account_age_hours"),
+                    row.get("own_proof_link"),
+                    row.get("own_proof_text"),
+                    datetime.now(timezone.utc)
+                )
+            )
+
+        conn.commit()
+
+        print(
+            f"Neon current state updated: "
+            f"{len(new_df)} tasks."
+        )
+
+    finally:
+        cursor.close()
+        conn.close()
+
+
+def save_history_to_neon(history_rows):
+    """
+    Insert only newly detected bounty changes into Neon history.
+    """
+
+    if not history_rows:
+        print("Neon history: no new change records.")
+        return
+
+    conn = get_db_connection()
+
+    inserted = 0
+
+    try:
+        cursor = conn.cursor()
+
+        for row in history_rows:
+
+            change_type = row.get("change_type")
+
+            # Match the database constraint.
+            if change_type == "new_task":
+                db_change_type = "new_task"
+            else:
+                changed_fields = str(
+                    row.get("changed_fields", "")
+                )
+
+                if (
+                    "status" in changed_fields
+                    or "task_status" in changed_fields
+                ):
+                    db_change_type = "status_change"
+                else:
+                    db_change_type = "metric_change"
+
+            snapshot_at = row.get("snapshot_at")
+
+            cursor.execute(
+                """
+                INSERT INTO bounty_history (
+                    task_id,
+                    snapshot_at,
+                    change_type,
+                    title,
+                    category,
+                    brief,
+                    proof_required,
+                    reward_xrp,
+                    reward_xora,
+                    reward_label,
+                    status,
+                    task_status,
+                    max_claims,
+                    claimed_count,
+                    spots_left,
+                    submitted_count,
+                    approved_count,
+                    paid_count,
+                    difficulty,
+                    quality_bar,
+                    min_proof_chars,
+                    proof_link_required,
+                    x_post_required,
+                    min_account_age_hours,
+                    own_proof_link,
+                    own_proof_text
+                )
+                VALUES (
+                    %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s, %s, %s
+                )
+                ON CONFLICT (task_id, snapshot_at)
+                DO NOTHING
+                """,
+                (
+                    row.get("task_id"),
+                    snapshot_at,
+                    db_change_type,
+                    row.get("title"),
+                    row.get("category"),
+                    row.get("brief"),
+                    row.get("proof_required"),
+                    row.get("reward_xrp"),
+                    row.get("reward_xora"),
+                    row.get("reward_label"),
+                    row.get("status"),
+                    row.get("task_status"),
+                    row.get("max_claims"),
+                    row.get("claimed_count"),
+                    row.get("spots_left"),
+                    row.get("submitted_count"),
+                    row.get("approved_count"),
+                    row.get("paid_count"),
+                    row.get("difficulty"),
+                    row.get("quality_bar"),
+                    row.get("min_proof_chars"),
+                    row.get("proof_link_required"),
+                    row.get("x_post_required"),
+                    row.get("min_account_age_hours"),
+                    row.get("own_proof_link"),
+                    row.get("own_proof_text")
+                )
+            )
+
+            inserted += cursor.rowcount
+
+        conn.commit()
+
+        print(
+            f"Neon history updated: "
+            f"{inserted} new change records."
+        )
+
+    finally:
+        cursor.close()
+        conn.close()
+
+        
 # ============================================================
 # MAIN
 # ============================================================
@@ -490,19 +750,25 @@ def main():
             old_df
         )
 
-        # 5. Replace current dataset with latest state
+        # 5. Replace current CSV with latest state
         save_current(new_df)
-
-        # 6. Append ONLY meaningful changes to history
+        
+        # 6. Append ONLY meaningful changes to CSV history
         save_history(history_rows)
-
-        # 7. Print result
+        
+        # 7. Write latest state to Neon
+        save_current_to_neon(new_df)
+        
+        # 8. Write ONLY meaningful changes to Neon history
+        save_history_to_neon(history_rows)
+        
+        # 9. Print result
         print_summary(
             new_df,
             old_df,
             history_rows
         )
-
+        
         print()
         print("Scraping completed successfully.")
 
