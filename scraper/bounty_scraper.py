@@ -14,6 +14,12 @@ load_dotenv()
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from scraper.leaderboard_scraper import (
+    flatten_leaderboard,
+    save_leaderboard_backend,
+    save_leaderboard_current,
+    save_leaderboard_history,
+)
 from config.config import API_URL, CONTRIBUTOR_ID
 
 
@@ -734,41 +740,56 @@ def main():
         # 1. Fetch API
         data = fetch_bounties()
 
-        # 2. Convert API tasks into dataframe
+        # 2. Extract latest Top-12 leaderboard
+        leaderboard_df = flatten_leaderboard(data)
+
+        print()
+        print("=" * 60)
+        print("XORA TOP-12 LEADERBOARD")
+        print("=" * 60)
+        print(leaderboard_df.to_string(index=False))
+        print("=" * 60)
+
+        # 3. Save leaderboard data to Neon
+        save_leaderboard_backend(leaderboard_df)
+        save_leaderboard_current(leaderboard_df)
+        save_leaderboard_history(leaderboard_df)
+
+        # 4. Convert API tasks into dataframe
         new_df = flatten_tasks(data)
 
         if new_df.empty:
             print("No bounty tasks returned by API.")
             return
 
-        # 3. Load previous current state
+        # 5. Load previous current state
         old_df = load_current()
 
-        # 4. Detect new tasks and metric/state changes
+        # 6. Detect new tasks and metric/state changes
         history_rows = process_data(
             new_df,
             old_df
         )
 
-        # 5. Replace current CSV with latest state
+        # 7. Replace current CSV with latest state
         save_current(new_df)
-        
-        # 6. Append ONLY meaningful changes to CSV history
+
+        # 8. Append ONLY meaningful changes to CSV history
         save_history(history_rows)
-        
-        # 7. Write latest state to Neon
+
+        # 9. Write latest state to Neon
         save_current_to_neon(new_df)
-        
-        # 8. Write ONLY meaningful changes to Neon history
+
+        # 10. Write ONLY meaningful changes to Neon history
         save_history_to_neon(history_rows)
-        
-        # 9. Print result
+
+        # 11. Print result
         print_summary(
             new_df,
             old_df,
             history_rows
         )
-        
+
         print()
         print("Scraping completed successfully.")
 
