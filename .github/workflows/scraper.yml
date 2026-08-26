@@ -51,14 +51,13 @@ jobs:
             git push
           fi
 
-      - name: Push results to org repo
+      - name: Push ingestion marker to org repo
         run: |
           git config --global user.name "github-actions"
           git config --global user.email "actions@github.com"
           git clone https://x-access-token:${{ secrets.ORG_REPO_TOKEN }}@github.com/StyxxAI/xora_intelligence.git org-repo
-          cp data/bounty_current.csv org-repo/ingestion-history/bounty_current-$(date +%F).csv
-          cp data/bounty_history.csv org-repo/ingestion-history/bounty_history-$(date +%F).csv
+          echo "Ingestion run completed successfully on $(date)" > org-repo/ingestion-history/run-$(date +%F).log
           cd org-repo
           git add ingestion-history/
-          git commit -m "Add ingestion results for $(date +%F)"
+          git commit -m "Record ingestion run for $(date +%F)"
           git push origin main
