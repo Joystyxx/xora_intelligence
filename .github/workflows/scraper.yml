@@ -50,8 +50,3 @@ jobs:
             git commit -m "Update XORA bounty data"
             git push
           fi
-
-
-          git add ingestion-history/
-          git commit -m "Record ingestion run for $(date +%F)"
-          git push origin main
